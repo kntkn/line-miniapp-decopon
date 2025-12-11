@@ -13,6 +13,13 @@ type Coupon = {
   code?: string;
   pin?: string;
   usedAt?: string;
+  redeemedAt?: string;
+};
+
+type ApplicationStatus = "draft" | "submitted" | "reviewing" | "approved" | "monitoring";
+
+type FormErrors = {
+  [key: string]: string;
 };
 
 type Tx = { 
@@ -384,13 +391,28 @@ function MainOnePage({ initialTab, txs, onTx, onApply }: {
       desc: "LeafHotelで使える宿泊割引", 
       products: ["直予約限定", "税込総額から割引"] 
     },
+    {
+      id: rid(),
+      brand: "EcoCafe",
+      icon: "🌿",
+      face: 800,
+      needT: 0.15,
+      status: "usable",
+      desc: "EcoCafeで使える食事券",
+      products: ["ランチセット", "サラダ・スープ"],
+      code: `EC-${rid()}-${rid().slice(0,4)}`,
+      pin: String(1000 + Math.floor(Math.random() * 9000)),
+      redeemedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString() // 2日前に引き換え
+    }
   ]);
 
-  const [submitted, setSubmitted] = useState<string | null>(null);
+  const [applicationStatus, setApplicationStatus] = useState<ApplicationStatus>("draft");
+  const [applicationNumber, setApplicationNumber] = useState<string | null>(null);
   const [previewRedeem, setPreviewRedeem] = useState<null | Coupon>(null);
   const [confirmUse, setConfirmUse] = useState<null | Coupon>(null);
   const [showBarcode, setShowBarcode] = useState<null | Coupon>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
 
   const kg = useMemo(() => Math.floor(creditsT * 1000), [creditsT]);
 
@@ -399,58 +421,105 @@ function MainOnePage({ initialTab, txs, onTx, onApply }: {
   };
 
   const validateForm = () => {
+    const errors: FormErrors = {};
+    
+    // 必須項目チェック
     const required = [
-      'name', 'nameKana', 'postalCode', 'address', 'birthDate', 
-      'phone1', 'email', 'pcsVendor', 'pcsModel', 'pcsSerial', 
-      'pcsQuantity', 'pcsRatedOutput'
+      { field: 'name', label: 'お名前' },
+      { field: 'nameKana', label: 'フリガナ' },
+      { field: 'postalCode', label: '郵便番号' },
+      { field: 'address', label: '住所' },
+      { field: 'birthDate', label: '生年月日' },
+      { field: 'phone1', label: '電話番号1' },
+      { field: 'email', label: 'メールアドレス' },
+      { field: 'pcsVendor', label: 'パワコンメーカー' },
+      { field: 'pcsModel', label: 'パワコン型式' },
+      { field: 'pcsSerial', label: 'パワコン製造番号' },
+      { field: 'pcsQuantity', label: 'パワコン設置数' },
+      { field: 'pcsRatedOutput', label: 'パワコン定格出力' }
     ];
-    
-    const missing = required.filter(field => !formData[field as keyof ApplyFormData]);
-    if (missing.length > 0) {
-      alert(`必須項目が未入力です: ${missing.join(', ')}`);
-      return false;
-    }
 
-    if (!formData.powerGenerationStartDate && !formData.powerReceptionStartDate) {
-      alert('発電開始日または受給開始日のいずれかを入力してください');
-      return false;
-    }
-
-    const agreements = [
-      'agreeMain', 'agreeDataProvision', 'agreeNotificationObligation', 
-      'agreeFaultNotification', 'agreeTerminationConditions', 'agreePersonalInfo'
-    ];
-    
-    const notAgreed = agreements.filter(field => !formData[field as keyof ApplyFormData]);
-    if (notAgreed.length > 0) {
-      alert('すべての同意項目にチェックしてください');
-      return false;
-    }
-
-    if (formData.hasBattery === '有') {
-      const batteryRequired = ['batteryVendor', 'batteryModel', 'batteryCapacity', 'batteryQuantity', 'batteryCertifiedCapacity', 'batteryEffectiveCapacity'];
-      const batteryMissing = batteryRequired.filter(field => !formData[field as keyof ApplyFormData]);
-      if (batteryMissing.length > 0) {
-        alert(`蓄電池情報が未入力です: ${batteryMissing.join(', ')}`);
-        return false;
+    required.forEach(({ field, label }) => {
+      if (!formData[field as keyof ApplyFormData]) {
+        errors[field] = `${label}は必須項目です`;
       }
+    });
+
+    // 日付チェック
+    if (!formData.powerGenerationStartDate && !formData.powerReceptionStartDate) {
+      errors.dates = '発電開始日または受給開始日のいずれかは必須です';
     }
 
-    const confirmations = ['confirmPcsNameplate', 'confirmPowerContract', 'confirmSpecSheet', 'confirmFinalCheck'];
-    const notConfirmed = confirmations.filter(field => !formData[field as keyof ApplyFormData]);
-    if (notConfirmed.length > 0) {
-      alert('確認項目にすべてチェックしてください');
-      return false;
+    // 同意項目チェック
+    const agreements = [
+      { field: 'agreeMain', label: 'decopon基本同意' },
+      { field: 'agreeDataProvision', label: 'データ提供同意' },
+      { field: 'agreeNotificationObligation', label: '通知義務同意' },
+      { field: 'agreeTerminationConditions', label: '補償終了条件同意' },
+      { field: 'agreePersonalInfo', label: '個人情報提供同意' }
+    ];
+
+    agreements.forEach(({ field, label }) => {
+      if (!formData[field as keyof ApplyFormData]) {
+        errors[field] = `${label}が必要です`;
+      }
+    });
+
+    // 蓄電池情報チェック
+    if (formData.hasBattery === '有') {
+      const batteryRequired = [
+        { field: 'batteryVendor', label: '蓄電池メーカー' },
+        { field: 'batteryModel', label: '蓄電池型式' },
+        { field: 'batteryCapacity', label: '蓄電池容量' },
+        { field: 'batteryQuantity', label: '蓄電池設置数' },
+        { field: 'batteryCertifiedCapacity', label: '認定容量' },
+        { field: 'batteryEffectiveCapacity', label: '実効容量' }
+      ];
+
+      batteryRequired.forEach(({ field, label }) => {
+        if (!formData[field as keyof ApplyFormData]) {
+          errors[field] = `${label}は必須項目です`;
+        }
+      });
     }
 
-    return true;
+    // 補助金情報チェック
+    if (formData.hasSubsidy === '有') {
+      if (!formData.subsidyName) errors.subsidyName = '補助金名称は必須項目です';
+      if (!formData.subsidyProvider) errors.subsidyProvider = '補助金交付元は必須項目です';
+    }
+
+    // 確認項目チェック
+    const confirmations = [
+      { field: 'confirmPcsNameplate', label: 'パワコン銘鈑写真' },
+      { field: 'confirmPowerContract', label: '需給契約書' },
+      { field: 'confirmSpecSheet', label: '仕様書等' },
+      { field: 'confirmFinalCheck', label: '記載内容確認' }
+    ];
+
+    confirmations.forEach(({ field, label }) => {
+      if (!formData[field as keyof ApplyFormData]) {
+        errors[field] = `${label}の確認が必要です`;
+      }
+    });
+
+    if (formData.hasBattery === '有' && !formData.confirmBatteryNameplate) {
+      errors.confirmBatteryNameplate = '蓄電池銘鈑写真の確認が必要です';
+    }
+
+    // エラーをセット
+    setFormErrors(errors);
+    
+    return Object.keys(errors).length === 0;
   };
 
   const submitApplication = () => {
     if (!validateForm()) return;
     
     const no = 'AP-' + rid();
-    setSubmitted(no);
+    setApplicationNumber(no);
+    setApplicationStatus("submitted");
+    
     onApply({ 
       id: rid(), 
       no, 
@@ -459,11 +528,25 @@ function MainOnePage({ initialTab, txs, onTx, onApply }: {
       startDate: formData.powerGenerationStartDate,
       receiveDate: formData.powerReceptionStartDate 
     });
+
+    // 審査開始のシミュレーション
+    setTimeout(() => {
+      setApplicationStatus("reviewing");
+    }, 3000);
+
+    // 審査完了・モニタリング開始のシミュレーション（デモ用）
+    setTimeout(() => {
+      setApplicationStatus("approved");
+      setTimeout(() => {
+        setApplicationStatus("monitoring");
+      }, 2000);
+    }, 8000);
   };
 
   const acceptRedeem = (c: Coupon) => {
     if (creditsT < c.needT) { 
-      alert('クレジット残高が不足しています'); 
+      setToast('❌ クレジット残高が不足しています'); 
+      setTimeout(() => setToast(null), 2000);
       return; 
     }
     
@@ -473,7 +556,8 @@ function MainOnePage({ initialTab, txs, onTx, onApply }: {
         ...x, 
         status: 'usable', 
         code: `DC-${rid()}-${rid().slice(0, 4)}`,
-        pin: String(1000 + Math.floor(Math.random() * 9000)) 
+        pin: String(1000 + Math.floor(Math.random() * 9000)),
+        redeemedAt: new Date().toISOString()
       } : x
     ));
     
@@ -486,7 +570,7 @@ function MainOnePage({ initialTab, txs, onTx, onApply }: {
       at: new Date().toISOString() 
     });
     
-    setToast(`${c.brand} を引き換えました✨`);
+    setToast(`✨ ${c.brand} を引き換えました！`);
     setTimeout(() => setToast(null), 2000);
   };
 
@@ -543,8 +627,11 @@ function MainOnePage({ initialTab, txs, onTx, onApply }: {
           <ApplicationForm 
             formData={formData}
             updateFormData={updateFormData}
-            submitted={submitted}
+            applicationStatus={applicationStatus}
+            applicationNumber={applicationNumber}
             onSubmit={submitApplication}
+            formErrors={formErrors}
+            onClearError={(field) => setFormErrors(prev => { const newErrors = { ...prev }; delete newErrors[field]; return newErrors; })}
           />
         ) : (
           <CreditsView 
@@ -592,29 +679,30 @@ function MainOnePage({ initialTab, txs, onTx, onApply }: {
 }
 
 // -------------------- Application Form --------------------
-function ApplicationForm({ formData, updateFormData, submitted, onSubmit }: {
+function ApplicationForm({ formData, updateFormData, applicationStatus, applicationNumber, onSubmit, formErrors, onClearError }: {
   formData: ApplyFormData;
   updateFormData: (field: keyof ApplyFormData, value: string | boolean) => void;
-  submitted: string | null;
+  applicationStatus: ApplicationStatus;
+  applicationNumber: string | null;
   onSubmit: () => void;
+  formErrors: FormErrors;
+  onClearError: (field: string) => void;
 }) {
-  if (submitted) {
-    return (
-      <div className="p-6 max-w-md mx-auto">
-        <Card className="text-center">
-          <div className="text-6xl mb-4">✅</div>
-          <div className="text-xl font-bold bg-gradient-to-r from-emerald-600 to-green-600 bg-clip-text text-transparent mb-2">
-            申請を受け付けました
-          </div>
-          <div className="text-lg font-semibold text-neutral-700 mb-3">
-            受付番号：{submitted}
-          </div>
-          <div className="text-sm text-neutral-600">
-            追加資料はトークでお送りください。
-          </div>
-        </Card>
-      </div>
-    );
+  // 申請状況に応じた画面表示
+  if (applicationStatus === "submitted") {
+    return <SubmissionCompleteScreen applicationNumber={applicationNumber} />;
+  }
+  
+  if (applicationStatus === "reviewing") {
+    return <ReviewingScreen applicationNumber={applicationNumber} />;
+  }
+  
+  if (applicationStatus === "approved") {
+    return <ApprovalScreen applicationNumber={applicationNumber} />;
+  }
+  
+  if (applicationStatus === "monitoring") {
+    return <MonitoringScreen applicationNumber={applicationNumber} />;
   }
 
   return (
@@ -623,7 +711,7 @@ function ApplicationForm({ formData, updateFormData, submitted, onSubmit }: {
       <Card>
         <SectionHeader title="個人情報" icon="👤" />
         
-        <FormField label="お名前" required>
+        <FormField label="お名前" required error={formErrors.name} field="name" onClearError={onClearError}>
           <input 
             className="form-input"
             value={formData.name}
@@ -1099,29 +1187,71 @@ const SectionHeader: React.FC<{ title: string; icon: string }> = ({ title, icon 
   </div>
 );
 
-const FormField: React.FC<React.PropsWithChildren<{ label: string; required?: boolean }>> = ({ label, required, children }) => (
+const FormField: React.FC<React.PropsWithChildren<{ label: string; required?: boolean; error?: string; field?: string; onClearError?: (field: string) => void }>> = ({ 
+  label, 
+  required, 
+  error, 
+  field, 
+  onClearError, 
+  children 
+}) => (
   <div className="space-y-1">
     <label className="block text-sm font-medium text-neutral-700">
       {label}
       {required && <span className="text-red-500 ml-1">*</span>}
     </label>
-    {children}
+    <div className="relative">
+      {React.isValidElement(children) && field && onClearError ? 
+        React.cloneElement(children as React.ReactElement<any>, {
+          onFocus: () => onClearError(field),
+          className: `${(children as React.ReactElement<any>).props.className || 'form-input'} ${error ? 'border-red-500 ring-1 ring-red-500' : ''}`
+        }) : 
+        children
+      }
+      {error && (
+        <div className="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-red-600">
+          <span className="w-3 h-3 rounded-full bg-red-500 text-white flex items-center justify-center text-xs">!</span>
+          {error}
+        </div>
+      )}
+    </div>
   </div>
 );
 
-const CheckboxField: React.FC<{ label: string; checked: boolean; onChange: (checked: boolean) => void; required?: boolean }> = ({ label, checked, onChange, required }) => (
-  <label className="flex items-start gap-3 cursor-pointer group">
-    <input 
-      type="checkbox"
-      checked={checked}
-      onChange={e => onChange(e.target.checked)}
-      className="mt-1 h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-neutral-300 rounded transition-all"
-    />
-    <span className="text-sm text-neutral-700 group-hover:text-neutral-900 transition-colors">
-      {label}
-      {required && <span className="text-red-500 ml-1">*</span>}
-    </span>
-  </label>
+const CheckboxField: React.FC<{ label: string; checked: boolean; onChange: (checked: boolean) => void; required?: boolean; error?: string; field?: string; onClearError?: (field: string) => void }> = ({ 
+  label, 
+  checked, 
+  onChange, 
+  required, 
+  error, 
+  field, 
+  onClearError 
+}) => (
+  <div className="relative">
+    <label className="flex items-start gap-3 cursor-pointer group">
+      <input 
+        type="checkbox"
+        checked={checked}
+        onChange={e => {
+          onChange(e.target.checked);
+          if (field && onClearError) onClearError(field);
+        }}
+        className={`mt-1 h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-neutral-300 rounded transition-all ${
+          error ? 'border-red-500' : ''
+        }`}
+      />
+      <span className="text-sm text-neutral-700 group-hover:text-neutral-900 transition-colors">
+        {label}
+        {required && <span className="text-red-500 ml-1">*</span>}
+      </span>
+    </label>
+    {error && (
+      <div className="mt-1 flex items-center gap-1 text-xs text-red-600">
+        <span className="w-3 h-3 rounded-full bg-red-500 text-white flex items-center justify-center text-xs">!</span>
+        {error}
+      </div>
+    )}
+  </div>
 );
 
 const CouponGrid: React.FC<{
@@ -1337,7 +1467,7 @@ const RedeemModal: React.FC<{ coupon: Coupon; onClose: () => void; onRedeem: () 
         </div>
       )}
 
-      <SwipeToConfirm onComplete={onRedeem}>
+      <SwipeToConfirm variant="redeem" onComplete={onRedeem}>
         スワイプして引き換える
       </SwipeToConfirm>
     </div>
@@ -1357,7 +1487,7 @@ const UseModal: React.FC<{ coupon: Coupon; onClose: () => void; onUse: () => voi
         ⚠️ 一度バーコードを表示すると取り消せません（1回限り）
       </div>
 
-      <SwipeToConfirm onComplete={onUse}>
+      <SwipeToConfirm variant="use" onComplete={onUse}>
         スワイプして使用
       </SwipeToConfirm>
     </div>
@@ -1397,6 +1527,132 @@ const BarcodeModal: React.FC<{ coupon: Coupon; onClose: () => void }> = ({ coupo
   </Sheet>
 );
 
+// -------------------- Application Status Screens --------------------
+const SubmissionCompleteScreen: React.FC<{ applicationNumber: string | null }> = ({ applicationNumber }) => (
+  <div className="p-6 max-w-md mx-auto">
+    <Card className="text-center">
+      <div className="text-6xl mb-4 animate-bounce">📤</div>
+      <div className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent mb-3">
+        申請を送信しました
+      </div>
+      <div className="text-lg font-semibold text-neutral-700 mb-4">
+        受付番号：{applicationNumber}
+      </div>
+      <div className="text-sm text-neutral-600 mb-4">
+        申請が正常に送信されました。<br />
+        審査開始まで今しばらくお待ちください。
+      </div>
+      <div className="flex items-center justify-center gap-2 text-blue-600">
+        <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
+        <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse" style={{ animationDelay: '0.5s' }}></div>
+        <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse" style={{ animationDelay: '1s' }}></div>
+      </div>
+    </Card>
+  </div>
+);
+
+const ReviewingScreen: React.FC<{ applicationNumber: string | null }> = ({ applicationNumber }) => (
+  <div className="p-6 max-w-md mx-auto">
+    <Card className="text-center">
+      <div className="text-6xl mb-4">🔍</div>
+      <div className="text-2xl font-bold bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent mb-3">
+        審査中
+      </div>
+      <div className="text-lg font-semibold text-neutral-700 mb-4">
+        受付番号：{applicationNumber}
+      </div>
+      <div className="text-sm text-neutral-600 mb-6">
+        お客様の申請内容を詳しく審査しています。<br />
+        審査には通常2-3営業日お時間をいただきます。
+      </div>
+      
+      <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-4">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-sm font-medium text-orange-700">審査進行中...</span>
+        </div>
+        <div className="w-full bg-orange-200 rounded-full h-2 mb-2">
+          <div className="bg-orange-500 h-2 rounded-full w-2/3 animate-pulse"></div>
+        </div>
+        <div className="text-xs text-orange-600">進捗: 約67%</div>
+      </div>
+      
+      <div className="text-xs text-neutral-500">
+        審査完了次第、自動的に次の画面に進みます
+      </div>
+    </Card>
+  </div>
+);
+
+const ApprovalScreen: React.FC<{ applicationNumber: string | null }> = ({ applicationNumber }) => (
+  <div className="p-6 max-w-md mx-auto">
+    <Card className="text-center">
+      <div className="text-6xl mb-4">🎉</div>
+      <div className="text-2xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent mb-3">
+        審査完了
+      </div>
+      <div className="text-lg font-semibold text-neutral-700 mb-4">
+        受付番号：{applicationNumber}
+      </div>
+      <div className="text-sm text-neutral-600 mb-6">
+        おめでとうございます！<br />
+        申請が承認されました。
+      </div>
+      
+      <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="text-green-600 text-2xl">✅</div>
+          <span className="text-sm font-medium text-green-700">承認完了</span>
+        </div>
+        <div className="text-xs text-green-600">
+          モニタリングの準備を開始しています...
+        </div>
+      </div>
+    </Card>
+  </div>
+);
+
+const MonitoringScreen: React.FC<{ applicationNumber: string | null }> = ({ applicationNumber }) => (
+  <div className="p-6 max-w-md mx-auto">
+    <Card className="text-center">
+      <div className="text-6xl mb-4">📊</div>
+      <div className="text-2xl font-bold bg-gradient-to-r from-emerald-600 to-green-600 bg-clip-text text-transparent mb-3">
+        モニタリング開始
+      </div>
+      <div className="text-lg font-semibold text-neutral-700 mb-4">
+        受付番号：{applicationNumber}
+      </div>
+      <div className="text-sm text-neutral-600 mb-6">
+        太陽光発電設備のモニタリングを開始しました。<br />
+        環境価値の計測・記録を行っています。
+      </div>
+      
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+          <div className="text-emerald-600 text-xl mb-1">🌟</div>
+          <div className="text-xs text-emerald-700 font-medium">ステータス</div>
+          <div className="text-sm font-semibold text-emerald-800">稼働中</div>
+        </div>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <div className="text-blue-600 text-xl mb-1">⚡</div>
+          <div className="text-xs text-blue-700 font-medium">発電量</div>
+          <div className="text-sm font-semibold text-blue-800">1.2 kWh</div>
+        </div>
+      </div>
+      
+      <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-lg p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
+          <span className="text-sm font-medium text-emerald-700">リアルタイムモニタリング中</span>
+        </div>
+        <div className="text-xs text-emerald-600">
+          環境価値が蓄積されると自動的にクレジットに変換されます
+        </div>
+      </div>
+    </Card>
+  </div>
+);
+
 // -------------------- Helper Components --------------------
 const FakeBarcode: React.FC<{ seed: string }> = ({ seed }) => {
   const bars = useMemo(() => {
@@ -1433,23 +1689,57 @@ const FakeBarcode: React.FC<{ seed: string }> = ({ seed }) => {
   );
 };
 
-const SwipeToConfirm: React.FC<React.PropsWithChildren<{ onComplete: () => void }>> = ({ children, onComplete }) => {
+const SwipeToConfirm: React.FC<React.PropsWithChildren<{ onComplete: () => void; variant?: "redeem" | "use" }>> = ({ children, onComplete, variant = "redeem" }) => {
   const [progress, setProgress] = useState(0);
+  const [isCompleted, setIsCompleted] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
+  const colors = {
+    redeem: {
+      bg: 'bg-blue-100',
+      track: 'bg-blue-400',
+      thumb: 'bg-blue-600',
+      text: 'text-blue-700',
+      completeBg: 'bg-green-400',
+      completeText: 'text-green-700'
+    },
+    use: {
+      bg: 'bg-orange-100', 
+      track: 'bg-orange-400',
+      thumb: 'bg-orange-600',
+      text: 'text-orange-700',
+      completeBg: 'bg-green-400',
+      completeText: 'text-green-700'
+    }
+  };
+
+  const theme = colors[variant];
+
   const handleStart = (e: React.MouseEvent | React.TouchEvent) => {
+    if (isCompleted) return;
     e.preventDefault();
     setIsDragging(true);
+    
     const startX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const base = trackRef.current?.getBoundingClientRect();
     if (!base) return;
 
+    // Haptic feedback for mobile
+    if ('vibrate' in navigator) {
+      navigator.vibrate(10);
+    }
+
     const handleMove = (ev: MouseEvent | TouchEvent) => {
       const x = 'touches' in ev ? ev.touches[0].clientX : ev.clientX;
-      const dx = Math.max(0, Math.min(base.width - 50, x - startX));
-      const newProgress = Math.round((dx / (base.width - 50)) * 100);
+      const dx = Math.max(0, Math.min(base.width - 56, x - startX)); // 56 = thumb width
+      const newProgress = Math.round((dx / (base.width - 56)) * 100);
       setProgress(newProgress);
+      
+      // Haptic feedback when nearing completion
+      if (newProgress > 85 && progress <= 85 && 'vibrate' in navigator) {
+        navigator.vibrate(15);
+      }
     };
 
     const handleEnd = () => {
@@ -1459,10 +1749,31 @@ const SwipeToConfirm: React.FC<React.PropsWithChildren<{ onComplete: () => void 
       document.removeEventListener('touchmove', handleMove);
       document.removeEventListener('touchend', handleEnd);
       
-      if (progress > 80) {
-        onComplete();
+      if (progress > 85) {
+        setIsCompleted(true);
+        setProgress(100);
+        
+        // Success haptic
+        if ('vibrate' in navigator) {
+          navigator.vibrate([50, 50, 50]);
+        }
+        
+        setTimeout(() => {
+          onComplete();
+        }, 300);
       } else {
-        setProgress(0);
+        // Smooth return animation
+        const returnAnimation = () => {
+          setProgress(prev => {
+            const newProgress = prev - 8;
+            if (newProgress <= 0) {
+              return 0;
+            }
+            requestAnimationFrame(returnAnimation);
+            return newProgress;
+          });
+        };
+        requestAnimationFrame(returnAnimation);
       }
     };
 
@@ -1476,30 +1787,61 @@ const SwipeToConfirm: React.FC<React.PropsWithChildren<{ onComplete: () => void 
     <div className="select-none">
       <div 
         ref={trackRef}
-        className="h-14 w-full rounded-full bg-neutral-200 border-2 border-neutral-300 relative overflow-hidden cursor-pointer"
+        className={`h-14 w-full rounded-2xl ${theme.bg} border border-neutral-200 relative overflow-hidden shadow-inner ${!isCompleted ? 'cursor-pointer' : ''}`}
         onMouseDown={handleStart}
         onTouchStart={handleStart}
       >
+        {/* Progress track */}
         <div 
-          className={`absolute inset-y-0 left-0 rounded-full transition-all duration-300 ${
-            progress > 80 ? 'bg-green-400' : 'bg-emerald-400'
+          className={`absolute inset-y-1 left-1 right-1 rounded-xl transition-all duration-300 ${
+            isCompleted ? theme.completeBg : progress > 0 ? theme.track : 'bg-transparent'
           }`}
-          style={{ width: `${progress}%` }}
+          style={{ 
+            width: `${Math.max(progress, 0)}%`,
+            maxWidth: 'calc(100% - 8px)'
+          }}
         />
         
-        <div className="absolute inset-0 flex items-center justify-center text-sm font-medium text-neutral-700 z-10">
-          {children}
+        {/* Text */}
+        <div className={`absolute inset-0 flex items-center justify-center text-sm font-medium transition-colors ${
+          isCompleted ? theme.completeText : theme.text
+        } z-10 pointer-events-none`}>
+          {isCompleted ? (variant === 'redeem' ? '引き換え完了!' : '使用完了!') : children}
         </div>
         
+        {/* Thumb */}
         <div 
-          className={`absolute top-1 left-1 h-12 w-12 rounded-full bg-white border-2 border-neutral-300 flex items-center justify-center shadow-lg transition-all duration-300 ${
-            isDragging ? 'scale-110' : ''
-          }`}
-          style={{ transform: `translateX(${progress * (trackRef.current?.offsetWidth || 0) / 100 - progress * 0.5}px) ${isDragging ? 'scale(1.1)' : ''}` }}
+          className={`absolute top-1 left-1 h-12 w-12 rounded-xl ${theme.thumb} flex items-center justify-center shadow-lg transition-all duration-200 ${
+            isDragging ? 'scale-105 shadow-xl' : 'shadow-lg'
+          } ${isCompleted ? 'bg-green-500' : ''}`}
+          style={{ 
+            transform: `translateX(${progress * ((trackRef.current?.offsetWidth || 0) - 56) / 100}px)`,
+          }}
         >
-          <span className="text-lg">→</span>
+          {isCompleted ? (
+            <span className="text-white text-lg">✓</span>
+          ) : (
+            <div className={`text-white transition-transform ${isDragging ? 'scale-110' : ''}`}>
+              {variant === 'redeem' ? '→' : '→'}
+            </div>
+          )}
         </div>
+        
+        {/* Shine effect when dragging */}
+        {isDragging && !isCompleted && (
+          <div 
+            className="absolute top-0 bottom-0 w-8 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-pulse"
+            style={{ left: `${progress}%` }}
+          />
+        )}
       </div>
+      
+      {/* Instruction text */}
+      {!isCompleted && (
+        <div className="text-center mt-2 text-xs text-neutral-500">
+          {variant === 'redeem' ? 'スライドして引き換え' : 'スライドして使用'}
+        </div>
+      )}
     </div>
   );
 };
