@@ -11,7 +11,7 @@ export default defineConfig({
   build: {
     outDir: 'dist'
   },
-  base: '/',
+  base: process.env.NODE_ENV === 'production' ? '/line-miniapp-decopon/' : '/',
   define: {
     global: 'globalThis'
   }
