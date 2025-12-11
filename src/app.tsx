@@ -394,7 +394,7 @@ function MainOnePage({ initialTab, txs, onTx, onApply }: {
 
   const kg = useMemo(() => Math.floor(creditsT * 1000), [creditsT]);
 
-  const updateFormData = (field: keyof ApplyFormData, value: any) => {
+  const updateFormData = (field: keyof ApplyFormData, value: string | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -594,7 +594,7 @@ function MainOnePage({ initialTab, txs, onTx, onApply }: {
 // -------------------- Application Form --------------------
 function ApplicationForm({ formData, updateFormData, submitted, onSubmit }: {
   formData: ApplyFormData;
-  updateFormData: (field: keyof ApplyFormData, value: any) => void;
+  updateFormData: (field: keyof ApplyFormData, value: string | boolean) => void;
   submitted: string | null;
   onSubmit: () => void;
 }) {
@@ -1445,7 +1445,7 @@ const SwipeToConfirm: React.FC<React.PropsWithChildren<{ onComplete: () => void 
     const base = trackRef.current?.getBoundingClientRect();
     if (!base) return;
 
-    const handleMove = (ev: any) => {
+    const handleMove = (ev: MouseEvent | TouchEvent) => {
       const x = 'touches' in ev ? ev.touches[0].clientX : ev.clientX;
       const dx = Math.max(0, Math.min(base.width - 50, x - startX));
       const newProgress = Math.round((dx / (base.width - 50)) * 100);
