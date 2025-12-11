@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 
 // 型定義
 type Coupon = {
@@ -31,15 +31,6 @@ type Tx = {
   at: string 
 };
 
-type ApplyLog = { 
-  id: string; 
-  no: string; 
-  at: string; 
-  brand: string; 
-  amountKg?: number; 
-  startDate?: string;
-  receiveDate?: string 
-};
 
 // フォーム型
 type ApplyFormData = {
@@ -100,7 +91,6 @@ const rid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 export default function DecoponMiniApp() {
   const [page, setPage] = useState<'home' | 'apply' | 'my' | 'coupon' | 'mycoupon'>('home');
   const [appStatus, setAppStatus] = useState<ApplicationStatus>('draft');
-  const [showStatusDetail, setShowStatusDetail] = useState(false);
   
   // クーポン・クレジット関連
   const [coupons, setCoupons] = useState<Coupon[]>([
@@ -117,8 +107,6 @@ export default function DecoponMiniApp() {
   
   // トランザクション履歴
   const [txs, setTxs] = useState<Tx[]>([]);
-  const [applyLogs, setApplyLogs] = useState<ApplyLog[]>([]);
-  const [email, setEmail] = useState('');
   
   // フォーム関連
   const [formData, setFormData] = useState<ApplyFormData>({
@@ -188,7 +176,12 @@ export default function DecoponMiniApp() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-blue-50">
       {/* Background Pattern */}
-      <div className="fixed inset-0 bg-[url('data:image/svg+xml,%3Csvg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"%3E%3Cg fill="none" fill-rule="evenodd"%3E%3Cg fill="%23f0f9ff" fill-opacity="0.4"%3E%3Cpath d="M30 30c0-6.627-5.373-12-12-12s-12 5.373-12 12 5.373 12 12 12 12-5.373 12-12zm12 0c0-6.627-5.373-12-12-12s-12 5.373-12 12 5.373 12 12 12 12-5.373 12-12z"/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-30"></div>
+      <div 
+        className="fixed inset-0 opacity-30"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23f0f9ff' fill-opacity='0.4'%3E%3Cpath d='M30 30c0-6.627-5.373-12-12-12s-12 5.373-12 12 5.373 12 12 12 12-5.373 12-12zm12 0c0-6.627-5.373-12-12-12s-12 5.373-12 12 5.373 12 12 12 12-5.373 12-12z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`
+        }}
+      ></div>
       
       {/* Main Container */}
       <div className="relative max-w-md mx-auto bg-white/90 backdrop-blur-xl shadow-2xl shadow-emerald-100/50 min-h-screen border-x border-white/50">
@@ -334,9 +327,6 @@ export default function DecoponMiniApp() {
           {page === 'my' && (
             <MyPage 
               txs={txs}
-              applyLogs={applyLogs}
-              email={email}
-              setEmail={setEmail}
               onBack={() => setPage('home')}
             />
           )}
@@ -479,15 +469,15 @@ const ApplicationForm: React.FC<{
   formData: ApplyFormData;
   setFormData: (data: ApplyFormData) => void;
   errors: FormErrors;
-  setErrors: (errors: FormErrors) => void;
+  setErrors: React.Dispatch<React.SetStateAction<FormErrors>>;
   appStatus: ApplicationStatus;
   setAppStatus: (status: ApplicationStatus) => void;
   onBack: () => void;
 }> = ({ formData, setFormData, errors, setErrors, appStatus, setAppStatus, onBack }) => {
   
   const clearError = (field: string) => {
-    setErrors(prev => {
-      const newErrors = { ...prev };
+    setErrors((prev: FormErrors) => {
+      const newErrors: FormErrors = { ...prev };
       delete newErrors[field];
       return newErrors;
     });
@@ -690,11 +680,8 @@ const CheckboxField: React.FC<{
 // -------------------- My Page --------------------
 const MyPage: React.FC<{
   txs: Tx[];
-  applyLogs: ApplyLog[];
-  email: string;
-  setEmail: (email: string) => void;
   onBack: () => void;
-}> = ({ txs, applyLogs, email, setEmail, onBack }) => (
+}> = ({ txs, onBack }) => (
   <div>
     <div className="flex items-center gap-3 mb-6">
       <button 
@@ -732,7 +719,7 @@ const MyPage: React.FC<{
 );
 
 // -------------------- Modals --------------------
-const Sheet: React.FC<{ onClose: () => void; children: React.ReactNode }> = ({ onClose, children }) => (
+const Sheet: React.FC<{ onClose: () => void; children: React.ReactNode }> = ({ children }) => (
   <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end">
     <div className="w-full bg-white rounded-t-3xl p-6 animate-slide-up border-t border-gray-200 max-h-[80vh] overflow-y-auto">
       <div className="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-6"></div>
